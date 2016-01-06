@@ -11,6 +11,7 @@ var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
 var mandrill = function(event, context) {
   payload = event['payload']
+  console.log('payload: ', payload);
 
   for(var i = 0; i < payload.length; i++) {
     var params = {};
@@ -25,9 +26,11 @@ var mandrill = function(event, context) {
       "bounce_description": payload[i]['msg']['bounce_description'],
       "diag": payload[i]['msg']['diag']
     };
+    console.log('params: ', params);
 
     dynamo.put(params, function(err, data) {
       if (err) {
+        console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
         console.error("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
         context.fail(err);
       } else {
@@ -35,7 +38,7 @@ var mandrill = function(event, context) {
       }
     });
   };
-  context.succeed();
+  context.succeed("function mandrill succeed!");
   context.done();
 };
 
@@ -44,27 +47,52 @@ var clicksign_search = function(event, context){
     console.log(record.eventID);
     console.log(record.eventName);
     console.log('DynamoDB Record: %j', record.dynamodb);
+
+    bounced_email = record.dynamodb.Keys.email;
+
+    if (bounced_email){
+      console.log('bounced_mail: ', bounced_email);
+      sender = searchClicksign(bounced_email);
+
+      if (sender){
+        sendEmail(sender, bounced_email);
+      } else {
+        console.log('Bounce with no sender: ', bounced_email);
+      }
+    } else {
+      console.log('No bounced_mail found.');
+    }
   });
 
-  url = "https://desk.clicksign.com/admin/invites?email=imad%40savan.com.br"
+  context.succeed("function clicksign_search succeed!");
+  context.done();
+};
+
+function searchClicksign(bounced_email){
+  //fatch invite
+  url = "https://desk.clicksign.com/admin/invites?email=" + bounced_email.replace('@', '%40');
   body = request.get(url).auth(config['clicksign_auth_user'], config['clicksign_auth_pass']);
   $ = cheerio.load(body);
   var archive = $('a[href*="/admin/archives"]', body)[0].text;
+  console.log('archive: ', archive);
 
   if (archive != ''){
+    //fatch archive
     url = "https://desk.clicksign.com/admin/archives/" + archive;
     body = request.get(url).auth(config['clicksign_auth_user'], config['clicksign_auth_pass']);
     $ = cheerio.load(body);
-    var sender_name = $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0];
-    var sender_mail = $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1];
-  } else {
-    context.succeed('Bounce with no sender')
+    sender = {
+      "name": $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0],
+      "mail": $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1]
+    };
+    console.log('sender: ', sender);
+    return sender
   }
-};
+}
 
-function sendEmail(sender_name, sender_email, bounced_email){
+function sendEmail(sender, bounced_email){
   // dev mode
-  sender_email = 'mb@clicksign.com'
+  sender['email'] = 'mb@clicksign.com'
 
   // template
   var template = '';
@@ -72,8 +100,8 @@ function sendEmail(sender_name, sender_email, bounced_email){
     if (err) throw err;
     template = data.toString();
   });
- template = template.replace('{sender_name}', sender_name);
- template = template.replace('{sender_email}', sender_email);
+ template = template.replace('{sender_name}', sender['name']);
+ template = template.replace('{sender_email}', sender['email']);
  template = template.replace('{bounced_email}', bounced_email);
 
  var params = {
@@ -85,7 +113,7 @@ function sendEmail(sender_name, sender_email, bounced_email){
     }
   };
 
-  ses.sendEmail(params, function(err, data) {
+  ses.sendEmail(params, function(err, data){
     if(err) throw err
     console.log('Email sent:');
     console.log(data);
@@ -95,11 +123,16 @@ function sendEmail(sender_name, sender_email, bounced_email){
 exports.handler = function(event, context) {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
-  var operation = event.operation;
-  delete event.operation;
-  if (operation) {
-    console.log('Operation', operation, 'requested');
+  var operation = '';
+
+  if (event.Records){
+    operation = 'clicksign_search';
+  } else if (event.operation){
+    operation = event.operation;
+    delete event.operation;
   }
+
+  console.log('Operation', operation, 'requested');
 
   switch (operation) {
     case 'ping':
@@ -112,6 +145,6 @@ exports.handler = function(event, context) {
       clicksign_search(event, context);
       break;
     default:
-      //context.fail(new Error('Unrecognized operation "' + operation + '"'));
+      context.fail(new Error('Unrecognized operation "' + operation + '"'));
   }
 };
