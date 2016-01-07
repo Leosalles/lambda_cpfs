@@ -117,7 +117,6 @@ var process_stream = function(event, context){
       },
 
       function getClicksignArchive(bounced_email, archive, next){
-        //REVISAR A PARTIR DAQUI. ACIMA ESTÁ FUNCIONANDO.
         var username = config['clicksign_auth_user'],
             password = config['clicksign_auth_pass'],
             url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/archives/' + archive;
@@ -131,51 +130,70 @@ var process_stream = function(event, context){
           }
         });
 
-        //$ = cheerio.load(url_body);
-        //sender = {
-        //  "name": $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0],
-        //  "mail": $('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1]
-        //};
-        //console.log('sender: ', sender);
-        //return sender
-      //},
+      },
+
+      function getSenderFromArchive(bounced_email, archivesBody, next){
+        var body = cheerio.load(archivesBody);
+        var archive = body('a[href*="/admin/archives"]').first().text();
+        var sender = {
+          "name": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0],
+          "email": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1]
+        };
+        console.log('sender: ', sender);
+
+        if (sender){
+          next(null, bounced_email, sender)
+        } else {
+          next(new Error('Error in getSenderFromArchive.'));
+        }
+      },
 
       //function checkIfWasSent(sender, next){
 
       //},
 
-      //function sendEmail(sender, bounced_email){
-      //  if (sender){
-      //    // dev mode
-      //    sender['email'] = 'mb@clicksign.com'
+      function getTemplate(bounced_email, sender, next){
+        fs.readFile("mail_template.html", function (err, data) {
+          if (err){
+            next(err);
+          } else {
+            console.log('template: ', data.toString());
+            next(null, bounced_email, sender, data.toString());
+          }
+        });
+      },
 
-      //    // template
-      //    var template = '';
-      //    fs.readFile("mail_template.html", function (err, data) {
-      //      if (err) throw err;
-      //      template = data.toString();
-      //    });
-      //    template = template.replace('{sender_name}', sender['name']);
-      //    template = template.replace('{sender_email}', sender['email']);
-      //    template = template.replace('{bounced_email}', bounced_email);
+      function sendEmail(bounced_email, sender, template, next){
+        console.log('template: ', template);
+        template = template.replace('{sender_name}', sender['name']);
+        template = template.replace('{sender_email}', sender['email']);
+        template = template.replace('{bounced_email}', bounced_email);
 
-      //    var params = {
-      //       Source: config['ses_from'],
-      //       Destination: { ToAddresses: sender_email },
-      //       Message: {
-      //         Subject: { Data: 'E-mail inválido em seu documento' },
-      //         Body: { Html: { Data: template } }
-      //       }
-      //     };
+        var params = {
+           Source: config['ses_from'],
+           Destination: {
+             ToAddresses: [ config['ses_from'] ] //sender['email']
+             //, BccAddresses: [ 'suporte@clicksign.com' ]
+           },
+           Message: {
+             Subject: { Data: 'E-mail inválido em seu documento' },
+             Body: { Html: { Data: template } }
+           }
+         };
 
-      //     ses.sendEmail(params, function(err, data){
-      //       if(err) throw err
-      //       console.log('Email sent:');
-      //       console.log(data);
-      //     });
-      //   } else {
-      //     console.log('Bounce with no sender: ', bounced_email);
-      //   }
+         ses.sendEmail(params, function(err, data){
+          if (err){
+            next(err);
+          } else {
+            console.log('Email sent: ', data);
+            next(null, bounced_email, sender)
+          }
+         });
+
+      //},
+
+      //function updateTable(sender, next){
+
        }
     ], function (err, result) {
       if (err) {
