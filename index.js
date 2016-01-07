@@ -12,7 +12,7 @@ var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
 var mandrill = function(event, context) {
   payload = event['payload']
-  console.log('payload: ', payload);
+  //console.log('payload: ', payload);
 
   var params = {
     "RequestItems" : {},
@@ -38,7 +38,7 @@ var mandrill = function(event, context) {
     });
   }
 
-  console.log('params: ', params);
+  //console.log('params: ', params);
 
   dynamo.batchWrite(params, function(err, data) {
     if (err){
@@ -54,9 +54,9 @@ var mandrill = function(event, context) {
 var process_stream = function(event, context){
   var success = false;
   event.Records.forEach(function(record) {
-    console.log(record.eventID);
-    console.log(record.eventName);
-    console.log('DynamoDB Record: %j', record.dynamodb);
+    //console.log(record.eventID);
+    //console.log(record.eventName);
+    //console.log('DynamoDB Record: %j', record.dynamodb);
 
     async.waterfall([
       function getBouncedEmail(next){
@@ -76,7 +76,7 @@ var process_stream = function(event, context){
         console.log('url: ', url);
         request({url: url}, function (error, response, body) {
           if (!error && response.statusCode == 200) {
-            console.log('body: ', body);
+            //console.log('body: ', body);
             next(null, bounced_email, body);
           } else {
             next(error);
@@ -103,7 +103,7 @@ var process_stream = function(event, context){
         console.log('url: ', url);
         request({url: url}, function (error, response, body) {
           if (!error && response.statusCode == 200) {
-            console.log('body: ', body);
+            //console.log('body: ', body);
             next(null, bounced_email, body);
           } else {
             next(error);
@@ -168,14 +168,14 @@ var process_stream = function(event, context){
           if (err){
             next(err);
           } else {
-            console.log('template: ', data.toString());
+            //console.log('template: ', data.toString());
             next(null, bounced_email, sender, data.toString());
           }
         });
       },
 
       function sendEmail(bounced_email, sender, template, next){
-        console.log('template: ', template);
+        //console.log('template: ', template);
         template = template.replace('{sender_name}', sender['name']);
         template = template.replace('{sender_email}', sender['email']);
         template = template.replace('{bounced_email}', bounced_email);
