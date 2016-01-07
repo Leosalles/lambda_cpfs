@@ -5,7 +5,9 @@ var request = require('request');
 var cheerio = require('cheerio');
 var fs = require('fs');
 
+
 AWS.config.region = 'us-east-1';
+var lambda = new AWS.Lambda({ apiVersion: '2015-03-31' });
 var dynamo = new AWS.DynamoDB.DocumentClient()
 var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
@@ -13,33 +15,61 @@ var mandrill = function(event, context) {
   payload = event['payload']
   console.log('payload: ', payload);
 
-  for(var i = 0; i < payload.length; i++) {
-    var params = {};
-    params.TableName = "bounces";
-    params.Item = {
-      "uuid": uuid.v1(),
-      "email": payload[i]['msg']['email'],
-      "date": (new Date).getTime(),
-      "id": payload[i]['_id'],
-      "event": payload[i]['event'],
-      "state": payload[i]['msg']['state'],
-      "bounce_description": payload[i]['msg']['bounce_description'],
-      "diag": payload[i]['msg']['diag']
-    };
-    console.log('params: ', params);
+  var k = 0;
+  var params = {};
+  var params = {
+    RequestItems: {
+      'bounces': [
+        {
+          PutRequest: {
+            Item: {
+              HashKey: 'anotherKey',
+              NumAttribute: 1,
+              BoolAttribute: true,
+              ListAttribute: [1, 'two', false],
+              MapAttribute: { foo: 'bar' }
+            }
+          }
+        }
+      ]
+    }
+  };
 
-    dynamo.put(params, function(err, data) {
-      if (err) {
-        console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
-        console.error("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
-        context.fail(err);
-      } else {
-        console.log("Added item:", JSON.stringify(params, null, 2));
+  var params = {
+    "RequestItems" : {},
+  };
+
+  //table name
+  params.RequestItems.bounces = [];
+
+  for(var i = 0; i < payload.length; i++) {
+    params.RequestItems.bounces.push({
+      "PutRequest" : {
+        "Item" : {
+          "uuid": uuid.v1(),
+          "email": payload[i]['msg']['email'],
+          "date": (new Date).getTime(),
+          "id": payload[i]['_id'],
+          "event": payload[i]['event'],
+          "state": payload[i]['msg']['state'],
+          "bounce_description": payload[i]['msg']['bounce_description'],
+          "diag": payload[i]['msg']['diag']
+        }
       }
     });
-  };
-  context.succeed("function mandrill succeed!");
-  context.done();
+  }
+
+  console.log('params: ', params);
+
+  dynamo.batchWrite(params, function(err, data) {
+    if (err){
+      console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
+      context.fail(err);
+    } else {
+      console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
+      context.succeed("function mandrill succeed!");
+    }
+  });
 };
 
 var clicksign_search = function(event, context){
