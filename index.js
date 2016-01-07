@@ -2,10 +2,9 @@ var config = require('./config.json')
 var AWS = require('aws-sdk');
 var uuid = require('node-uuid');
 var request = require('request');
-var https = require('https');
 var cheerio = require('cheerio');
 var fs = require('fs');
-  var async = require('async');
+var async = require('async');
 
 AWS.config.region = 'us-east-1';
 var dynamo = new AWS.DynamoDB.DocumentClient()
@@ -14,26 +13,6 @@ var ses = new AWS.SES({apiVersion: '2010-12-01'});
 var mandrill = function(event, context) {
   payload = event['payload']
   console.log('payload: ', payload);
-
-  var k = 0;
-  var params = {};
-  var params = {
-    RequestItems: {
-      'bounces': [
-        {
-          PutRequest: {
-            Item: {
-              HashKey: 'anotherKey',
-              NumAttribute: 1,
-              BoolAttribute: true,
-              ListAttribute: [1, 'two', false],
-              MapAttribute: { foo: 'bar' }
-            }
-          }
-        }
-      ]
-    }
-  };
 
   var params = {
     "RequestItems" : {},
@@ -46,7 +25,7 @@ var mandrill = function(event, context) {
     params.RequestItems.bounces.push({
       "PutRequest" : {
         "Item" : {
-          "uuid": uuid.v1(),
+          "uuid": uuid.v4(),
           "email": payload[i]['msg']['email'],
           "date": (new Date).getTime(),
           "id": payload[i]['_id'],
@@ -73,6 +52,7 @@ var mandrill = function(event, context) {
 };
 
 var process_stream = function(event, context){
+  var success = false;
   event.Records.forEach(function(record) {
     console.log(record.eventID);
     console.log(record.eventName);
@@ -148,9 +128,40 @@ var process_stream = function(event, context){
         }
       },
 
-      //function checkIfWasSent(sender, next){
+      function checkIfWasSent(bounced_email, sender, next){
+        var yesterday = new Date();
+        yesterday = yesterday.setDate(yesterday.getDate() - 1);
 
-      //},
+        var params = {
+          TableName: "bounces",
+          IndexName: "email-date-index",
+          FilterExpression: "#email = :email AND #date > :date",
+          ExpressionAttributeNames: {
+            "#email": "email",
+            "#date": "date"
+          },
+          ExpressionAttributeValues: {
+            ":email": bounced_email,
+            ":date": yesterday
+          }
+        };
+
+        dynamo.scan(params, function(err, data) {
+          if (err) {
+            console.log("Query error. Data + Params:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
+            next(err);
+          } else {
+            console.log("Query succeeded. Data + Params:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
+            if (data.Items.length == 0){
+              console.log("Não foi enviado notificação desde ontem.");
+              next(null, bounced_email, sender);
+            } else {
+              console.log("Notificações enviadas desde ontem:", JSON.stringify(data.Items, null, 2));
+              next(new Error('Notificações enviadas anteriormente.'));
+            }
+          }
+        });
+      },
 
       function getTemplate(bounced_email, sender, next){
         fs.readFile("mail_template.html", function (err, data) {
@@ -189,26 +200,19 @@ var process_stream = function(event, context){
             next(null, bounced_email, sender)
           }
          });
-
-      //},
-
-      //function updateTable(sender, next){
-
        }
     ], function (err, result) {
       if (err) {
-        console.error('Failed to publish notifications: ', err);
+        console.error('Failed to process_stream: ', err);
       } else {
-        console.log('Successfully published all notifications.');
-        //context.succeed("function clicksign_search succeed!");
-        //context.done();
+        console.log('Successfully process_stream.');
+        success = true;
       }
     });
   });
-
+  if (success)
+    context.succeed("function process_stream succeed!");
 };
-
-
 
 exports.handler = function(event, context) {
   console.log('Received event:', JSON.stringify(event, null, 2));
