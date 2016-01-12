@@ -1,48 +1,51 @@
 {
-  "Records": [
-    {
-      "eventID": "73a9a16e88e5e71ffe442c9e05cbbda8",
-      "eventName": "INSERT",
-      "eventVersion": "1.0",
-      "eventSource": "aws:dynamodb",
-      "awsRegion": "us-east-1",
-      "dynamodb": {
-        "Keys": {
-          "uuid": {
-            "S": "a8b78540-b4e8-11e5-816c-ed7b703ca590"
-          }
-        },
-        "NewImage": {
-          "date": {
-            "N": "1452134706068"
-          },
-          "diag": {
-            "S": "smtp;550 5.1.1 The email account that you tried to reach does not exist. Please try double-checking the recipient's email address for typos or unnecessary spaces."
-          },
-          "id": {
-            "S": "exampleaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "state": {
-            "S": "bounced"
-          },
-          "event": {
-            "S": "hard_bounce"
-          },
-          "uuid": {
-            "S": "a8b78540-b4e8-11e5-816c-ed7b703ca590"
-          },
-          "email": {
-            "S": "clarice.camargo91@hotmail.com"
-          },
-          "bounce_description": {
-            "S": "bad_mailbox"
-          }
-        },
-        "SequenceNumber": "10440500000000000990034308",
-        "SizeBytes": 385,
-        "StreamViewType": "NEW_IMAGE"
-      },
-      "eventSourceARN": "arn:aws:dynamodb:us-east-1:162741033429:table/bounces/stream/2016-01-06T14:54:07.251"
-    }
-  ]
+    "Records": [
+        {
+            "eventID": "89b63a93499894123cf3c4e3a70896b8",
+            "eventName": "INSERT",
+            "eventVersion": "1.0",
+            "eventSource": "aws:dynamodb",
+            "awsRegion": "us-east-1",
+            "dynamodb": {
+                "Keys": {
+                    "uuid": {
+                        "S": "33e067bc-ce38-4b0f-9d81-5daef1686e16"
+                    },
+                    "email": {
+                        "S": "michaelitzFZCMG9PGxEyskdykg@gmail.com"
+                    }
+                },
+                "NewImage": {
+                    "date": {
+                        "N": "1452215053457"
+                    },
+                    "diag": {
+                        "S": "smtp;550 5.1.1 The email account that you tried to reach does not exist. Please try double-checking the recipient's email address for typos or unnecessary spaces. Learn more at https://support.google.com/mail/answer/6596 c136si1960746ywb.23 - gsmtp"
+                    },
+                    "id": {
+                        "S": "326fdd99c41d43bfbf37f7a0bb1b5afe"
+                    },
+                    "state": {
+                        "S": "bounced"
+                    },
+                    "event": {
+                        "S": "hard_bounce"
+                    },
+                    "uuid": {
+                        "S": "33e067bc-ce38-4b0f-9d81-5daef1686e16"
+                    },
+                    "email": {
+                        "S": "michaelitzFZCMG9PGxEyskdykg@gmail.com"
+                    },
+                    "bounce_description": {
+                        "S": "bad_mailbox"
+                    }
+                },
+                "SequenceNumber": "1672200000000001193343574",
+                "SizeBytes": 519,
+                "StreamViewType": "NEW_IMAGE"
+            },
+            "eventSourceARN": "arn:aws:dynamodb:us-east-1:162741033429:table/bounces/stream/2016-01-07T14:32:29.569"
+        }
+    ]
 }
