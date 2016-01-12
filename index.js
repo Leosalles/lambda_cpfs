@@ -78,24 +78,22 @@ var process_stream = function(event, context){
       request({url: url}, function (error, response, body) {
         if (!error && response.statusCode == 200) {
           //console.log('body: ', body);
+          //console.log('statuscode: ', statusCode)
           next(null, bounced_email, body);
         } else {
-          next(error);
+          next(new Error('Error in getClicksignInvite.'));
         }
       });
     },
 
     function getArchiveFromInvite(bounced_email, invitesBody, next){
-      try {
+      if (invitesBody){
+        console.log('invitesBody: ', invitesBody);
         var body = cheerio.load(invitesBody);
+        console.log('body: ', body);
         var archive = body('a[href*="/admin/archives"]').first().text();
         console.log('archive: ', archive);
       }
-
-      catch(err){
-        console.log('error: ', err);
-      }
-
       if (archive){
         next(null, bounced_email, archive)
       } else {
