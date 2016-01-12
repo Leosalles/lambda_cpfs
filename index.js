@@ -86,9 +86,15 @@ var process_stream = function(event, context){
     },
 
     function getArchiveFromInvite(bounced_email, invitesBody, next){
-      var body = cheerio.load(invitesBody);
-      var archive = body('a[href*="/admin/archives"]').first().text();
-      console.log('archive: ', archive);
+      try {
+        var body = cheerio.load(invitesBody);
+        var archive = body('a[href*="/admin/archives"]').first().text();
+        console.log('archive: ', archive);
+      }
+
+      catch(err){
+        console.log('error: ', err);
+      }
 
       if (archive){
         next(null, bounced_email, archive)
