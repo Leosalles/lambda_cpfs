@@ -169,7 +169,13 @@ var process_stream = function(event, context){
     },
 
     function getTemplate(bounced_email, sender, next){
-      fs.readFile("mail_template.html", function (err, data) {
+      bounce_description = event.Records[0].dynamodb.NewImage.bounce_description.S;
+      if (bounce_description.split(',')[0] == 'mailbox_full'){
+        template_file = 'mailbox_full_template.html';
+      } else {
+        template_file = 'mailbox_bounce_template.html';
+      }
+      fs.readFile(template_file, function (err, data) {
         if (err){
           next(err);
         } else {
@@ -192,7 +198,7 @@ var process_stream = function(event, context){
            //, BccAddresses: [ 'suporte@clicksign.com' ]
          },
          Message: {
-           Subject: { Data: 'E-mail inválido em seu documento' },
+           Subject: { Data: 'E-mail não entregue ao destinatário' },
            Body: { Html: { Data: template } }
          }
        };
