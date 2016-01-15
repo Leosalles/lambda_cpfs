@@ -195,7 +195,7 @@ var process_stream = function(event, context){
          Source: config['ses_from'],
          Destination: {
            ToAddresses: [ config['ses_from'] ] //sender['email']
-           //, BccAddresses: [ 'suporte@clicksign.com' ]
+           , BccAddresses: [ 'suporte@clicksign.com' ]
          },
          Message: {
            Subject: { Data: 'E-mail não entregue ao destinatário' },
