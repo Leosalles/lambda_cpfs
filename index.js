@@ -169,7 +169,11 @@ var process_stream = function(event, context){
     },
 
     function getTemplate(bounced_email, sender, next){
-      bounce_description = event.Records[0].dynamodb.NewImage.bounce_description.S;
+      if (event.Records[0].dynamodb.NewImage.bounce_description){
+        bounce_description = event.Records[0].dynamodb.NewImage.bounce_description.S;
+      } else {
+        bounce_description = 'rejected';
+      }
       if (bounce_description.split(',')[0] == 'mailbox_full'){
         template_file = 'mailbox_full_template.html';
       } else {
