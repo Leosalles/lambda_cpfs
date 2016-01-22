@@ -11,7 +11,7 @@ var dynamo = new AWS.DynamoDB.DocumentClient()
 var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
 var mandrill = function(event, context) {
-  payload = event['payload']
+  payload = event['payload'];
   //console.log('payload: ', payload);
 
   var params = {
@@ -32,8 +32,6 @@ var mandrill = function(event, context) {
           "event": payload[i]['event'],
           "state": payload[i]['msg']['state'],
           "bounce_description": payload[i]['msg']['bounce_description'],
-          //TODO: only if not null
-          //"errorMessage": "One or more parameter values were invalid: An AttributeValue may not contain an empty string",
           "diag": payload[i]['msg']['diag']
         }
       }
@@ -42,18 +40,97 @@ var mandrill = function(event, context) {
 
   cleanEmptyJson(params)
 
-  //console.log('params: ', params);
+  async.waterfall([
+    function getBouncedEmail(next) {
+      dynamo.batchWrite(params, function(err, data) {
+        if (err){
+          console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
+          next(err);
+        } else {
+          console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
+          next(null);
+        }
+      });
+    },
 
-  dynamo.batchWrite(params, function(err, data) {
-    if (err){
-      console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
-      context.fail(err);
+    function sendSlackBounce (next) {
+      //send a Slack message for each bounce on the payload
+      for(var i = 0; i < payload.length; i++) {
+        var slackMessage = slackMessageJSON(payload, i)
+
+        var options = {
+          uri: 'https://hooks.slack.com/services/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',
+          method: 'POST',
+          json: slackMessage
+        };
+
+        request(options, function (error, response, body) {
+          if (!error && response.statusCode == 200) {
+            //console.log('body: ', body);
+            next(null);
+          } else {
+            next(error);
+          }
+        });
+      }
+    }
+  ], function (err, result) {
+    if (err) {
+      context.done('An error has occurred: ' +  err);
     } else {
-      console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
-      context.succeed("function mandrill succeed!");
+      context.done('Successfully processed Mandrill');
     }
   });
-};
+}
+
+function slackMessageJSON(payload, i){
+  console.log(payload);
+  var slackMessage = {
+    "channel": "#suporte-int",
+    "username": "Mandrill",
+    "icon_emoji": ":mandrill:",
+    "text": "*Bounce received* " + payload[i]['msg']['email'],
+    "attachments": [
+      {
+        "fallback": "Bounce received " + payload[i]['msg']['email'],
+        "color": "#E3E4E6",
+        "fields": []
+      }
+    ]
+  };
+
+  if (payload[i]['event']) {
+    slackMessage.attachments[0].fields.push(
+      {
+        "title": "Event",
+        "value": payload[i]['event'],
+        "short": true
+      }
+    );
+  }
+
+  if (payload[i]['msg']['bounce_description']){
+    slackMessage.attachments[0].fields.push(
+      {
+        "title": "Description",
+        "value": payload[i]['msg']['bounce_description'],
+        "short": true
+      }
+    );
+  }
+
+  if (payload[i]['msg']['diag']){
+    slackMessage.attachments[0].fields.push(
+      {
+        "title": "Message",
+        "value": payload[i]['msg']['diag'],
+        "short": false
+      }
+    );
+  }
+
+  return slackMessage;
+}
 
 var process_stream = function(event, context){
   async.waterfall([
@@ -208,7 +285,7 @@ var process_stream = function(event, context){
        };
 
        ses.sendEmail(params, function(err, data){
-        if (err){
+        if (err) {
           next(err);
         } else {
           console.log('Email sent: ', data);
@@ -267,6 +344,6 @@ exports.handler = function(event, context) {
       process_stream(event, context);
       break;
     default:
-      context.fail(new Error('Unrecognized operation "' + operation + '"'));
+      //context.fail(new Error('Unrecognized operation "' + operation + '"'));
   }
 };
