@@ -276,7 +276,7 @@ var process_stream = function(event, context){
          Source: config['ses_from'],
          Destination: {
            ToAddresses: [ sender['email'] ]
-           , BccAddresses: [ config['ses_from'] ]
+           //, BccAddresses: [ config['ses_from'] ]
          },
          Message: {
            Subject: { Data: 'E-mail não entregue ao destinatário' },
@@ -292,7 +292,32 @@ var process_stream = function(event, context){
           next(null, bounced_email, sender)
         }
        });
-     }
+     },
+
+    function sendSlackEmail(bounced_email, sender, next) {
+      var slackMessage = {
+        "channel": "#suporte-int",
+        "username": "Clicksign",
+        "icon_emoji": ":cs:",
+        "text": "*Bounce notification* send to " + sender['name'] + " " + sender['email'] + " about bounced e-mail " + bounced_email + "."
+      };
+
+      var options = {
+        uri: 'https://hooks.slack.com/services/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',
+        method: 'POST',
+        json: slackMessage
+      };
+
+      request(options, function (error, response, body) {
+        if (!error && response.statusCode == 200) {
+          //console.log('body: ', body);
+          next(null);
+        } else {
+          next(error);
+        }
+      });
+    }
+
   ], function (err, result) {
        if (err) {
          context.succeed('An error has occurred: ' +  err);
