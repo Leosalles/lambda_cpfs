@@ -99,7 +99,7 @@ var postmark = function(event, context) {
       "PutRequest" : {
         "Item" : {
           "uuid": uuid.v4(),
-          "email": payload[i]['msg']['Email'],
+          "email": payload[i]['Email'],
           "date": (new Date).getTime(),
           "id": payload[i]['MessageID'],
           "event": payload[i]['Name'],
