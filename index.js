@@ -349,7 +349,7 @@ var process_stream = function(event, context){
          Source: config['ses_from'],
          Destination: {
            ToAddresses: [ sender['email'] ]
-           //, BccAddresses: [ config['ses_from'] ]
+           , BccAddresses: [ config['ses_from'] ]
          },
          Message: {
            Subject: { Data: 'E-mail não entregue ao destinatário' },
