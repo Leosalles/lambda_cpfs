@@ -83,47 +83,120 @@ var mandrill = function(event, context) {
   });
 }
 
+var postmark = function(event, context) {
+  payload = event['payload'];
+  //console.log('payload: ', payload);
+
+  var params = {
+    "RequestItems" : {},
+  };
+
+  //table name
+  params.RequestItems.bounces = [];
+
+  for(var i = 0; i < payload.length; i++) {
+    params.RequestItems.bounces.push({
+      "PutRequest" : {
+        "Item" : {
+          "uuid": uuid.v4(),
+          "email": payload[i]['msg']['Email'],
+          "date": (new Date).getTime(),
+          "id": payload[i]['MessageID'],
+          "event": payload[i]['Name'],
+          "state": payload[i]['Type'],
+          "bounce_description": payload[i]['Description'],
+          "diag": payload[i]['Details']
+        }
+      }
+    });
+  }
+
+  cleanEmptyJson(params)
+
+  async.waterfall([
+    function getBouncedEmail(next) {
+      dynamo.batchWrite(params, function(err, data) {
+        if (err){
+          console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
+          next(err);
+        } else {
+          console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
+          next(null);
+        }
+      });
+    },
+
+    function sendSlackBounce (next) {
+      //send a Slack message for each bounce on the payload
+      for(var i = 0; i < payload.length; i++) {
+        var slackMessage = slackMessageJSON(payload, i)
+
+        var options = {
+          uri: 'https://hooks.slack.com/services/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',
+          method: 'POST',
+          json: slackMessage
+        };
+
+        request(options, function (error, response, body) {
+          if (!error && response.statusCode == 200) {
+            //console.log('body: ', body);
+            next(null);
+          } else {
+            next(error);
+          }
+        });
+      }
+    }
+  ], function (err, result) {
+    if (err) {
+      context.done('An error has occurred: ' +  err);
+    } else {
+      context.done('Successfully processed Mandrill');
+    }
+  });
+}
+
 function slackMessageJSON(payload, i){
   console.log(payload);
   var slackMessage = {
     "channel": "#suporte-int",
-    "username": "Mandrill",
+    "username": "Postmark",
     "icon_emoji": ":mandrill:",
-    "text": "*Bounce received* " + payload[i]['msg']['email'],
+    "text": "*Bounce received* " + payload[i]['Email'],
     "attachments": [
       {
-        "fallback": "Bounce received " + payload[i]['msg']['email'],
+        "fallback": "Bounce received " + payload[i]['Email'],
         "color": "#E3E4E6",
         "fields": []
       }
     ]
   };
 
-  if (payload[i]['event']) {
+  if (payload[i]['Name']) {
     slackMessage.attachments[0].fields.push(
       {
         "title": "Event",
-        "value": payload[i]['event'],
+        "value": payload[i]['Name'],
         "short": true
       }
     );
   }
 
-  if (payload[i]['msg']['bounce_description']){
+  if (payload[i]['Description']){
     slackMessage.attachments[0].fields.push(
       {
         "title": "Description",
-        "value": payload[i]['msg']['bounce_description'],
+        "value": payload[i]['Description'],
         "short": true
       }
     );
   }
 
-  if (payload[i]['msg']['diag']){
+  if (payload[i]['Details']){
     slackMessage.attachments[0].fields.push(
       {
         "title": "Message",
-        "value": payload[i]['msg']['diag'],
+        "value": payload[i]['Details'],
         "short": false
       }
     );
@@ -364,6 +437,9 @@ exports.handler = function(event, context) {
       break;
     case 'mandrill':
       mandrill(event, context);
+      break;
+    case 'postmark':
+      postmark(event, context);
       break;
     case 'process_stream':
       process_stream(event, context);
