@@ -1,161 +1,17 @@
-var config = require('./config.json')
 var AWS = require('aws-sdk');
 var uuid = require('node-uuid');
 var request = require('request');
 var cheerio = require('cheerio');
 var fs = require('fs');
 var async = require('async');
+var uuid=require('node-uuid');
 
 AWS.config.region = 'us-east-1';
-var dynamo = new AWS.DynamoDB.DocumentClient()
+var dynamo = new AWS.DynamoDB.DocumentClient();
 var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
-var mandrill = function(event, context) {
-  payload = event['payload'];
-  //console.log('payload: ', payload);
 
-  var params = {
-    "RequestItems" : {},
-  };
-
-  //table name
-  params.RequestItems.bounces = [];
-
-  for(var i = 0; i < payload.length; i++) {
-    params.RequestItems.bounces.push({
-      "PutRequest" : {
-        "Item" : {
-          "uuid": uuid.v4(),
-          "email": payload[i]['msg']['email'],
-          "date": (new Date).getTime(),
-          "id": payload[i]['_id'],
-          "event": payload[i]['event'],
-          "state": payload[i]['msg']['state'],
-          "bounce_description": payload[i]['msg']['bounce_description'],
-          "diag": payload[i]['msg']['diag']
-        }
-      }
-    });
-  }
-
-  cleanEmptyJson(params)
-
-  async.waterfall([
-    function getBouncedEmail(next) {
-      dynamo.batchWrite(params, function(err, data) {
-        if (err){
-          console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
-          next(err);
-        } else {
-          console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
-          next(null);
-        }
-      });
-    },
-
-    function sendSlackBounce (next) {
-      //send a Slack message for each bounce on the payload
-      for(var i = 0; i < payload.length; i++) {
-        var slackMessage = slackMessageJSON(payload, i)
-
-        var options = {
-          uri: 'https://hooks.slack.com/services/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',
-          method: 'POST',
-          json: slackMessage
-        };
-
-        request(options, function (error, response, body) {
-          if (!error && response.statusCode == 200) {
-            //console.log('body: ', body);
-            next(null);
-          } else {
-            next(error);
-          }
-        });
-      }
-    }
-  ], function (err, result) {
-    if (err) {
-      context.done('An error has occurred: ' +  err);
-    } else {
-      context.done('Successfully processed Mandrill');
-    }
-  });
-}
-
-var postmark = function(event, context) {
-  payload = event['payload'];
-  //console.log('payload: ', payload);
-
-  var params = {
-    "RequestItems" : {},
-  };
-
-  //table name
-  params.RequestItems.bounces = [];
-
-  for(var i = 0; i < payload.length; i++) {
-    params.RequestItems.bounces.push({
-      "PutRequest" : {
-        "Item" : {
-          "uuid": uuid.v4(),
-          "email": payload[i]['Email'],
-          "date": (new Date).getTime(),
-          "id": payload[i]['MessageID'],
-          "event": payload[i]['Name'],
-          "state": payload[i]['Type'],
-          "bounce_description": payload[i]['Description'],
-          "diag": payload[i]['Details']
-        }
-      }
-    });
-  }
-
-  cleanEmptyJson(params)
-
-  async.waterfall([
-    function getBouncedEmail(next) {
-      dynamo.batchWrite(params, function(err, data) {
-        if (err){
-          console.log("Unable to add item. Error JSON:", JSON.stringify(err, null, 2), JSON.stringify(params, null, 2));
-          next(err);
-        } else {
-          console.log("Added item:", JSON.stringify(data, null, 2), JSON.stringify(params, null, 2));
-          next(null);
-        }
-      });
-    },
-
-    function sendSlackBounce (next) {
-      //send a Slack message for each bounce on the payload
-      for(var i = 0; i < payload.length; i++) {
-        var slackMessage = slackMessageJSON(payload, i)
-
-        var options = {
-          uri: 'https://hooks.slack.com/services/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',
-          method: 'POST',
-          json: slackMessage
-        };
-
-        request(options, function (error, response, body) {
-          if (!error && response.statusCode == 200) {
-            //console.log('body: ', body);
-            next(null);
-          } else {
-            next(error);
-          }
-        });
-      }
-    }
-  ], function (err, result) {
-    if (err) {
-      context.done('An error has occurred: ' +  err);
-    } else {
-      context.done('Successfully processed Mandrill');
-    }
-  });
-}
-
+	
 function slackMessageJSON(payload, i){
   console.log(payload);
   var slackMessage = {
@@ -205,52 +61,148 @@ function slackMessageJSON(payload, i){
   return slackMessage;
 }
 
-var process_stream = function(event, context){
-  async.waterfall([
-    function getBouncedEmail(next){
-      console.log(event.Records[0].eventID);
-      console.log(event.Records[0].eventName);
-      console.log('DynamoDB Record: %j', event.Records[0].dynamodb);
-      bounced_email = event.Records[0].dynamodb.NewImage.email.S;
-      if (bounced_email){
-        console.log('bounced_email: ', bounced_email);
-        next(null, bounced_email);
-      } else {
-        next(new Error('No bounced_mail found.'));
-      }
-    },
+function getFirstItem(next ){
+    var yesterday = new Date();
+    yesterday = yesterday.getFullYear()*10000+yesterday.getMonth()*100+yesterday.getDate()-1;
+    var params = {
+            TableName: "Users",
+            IndexName: "status-Date-index",
+            KeyConditionExpression: "#status = :val AND #Date>:val",
+            ExpressionAttributeValues:{
+            	":val":1
+            },
+            Limit:1,
+            ExpressionAttributeNames: {
+                "#status": "status",
+                "#Date":"Date"
+              },
+            ScanIndexForward: false
+          };
 
-    function getClicksignInvite(bounced_email, next){
-      var username = config['clicksign_auth_user'],
-          password = config['clicksign_auth_pass'],
-          url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/invites?email=' + bounced_email.replace('@', '%40');
+      dynamo.query(params, function(err, data) {
+            if (err) {
+            	console.log(err);
+            	next( err);
+            }
+            else{
+            	next(null, data);
+            }
+      });
+}
+
+function process_stream( pg,dataQ){
+  async.waterfall([
+
+
+                   
+    function getClicksignInvite(  next){
+		if(pg==null){
+			console.log("Sem PG");
+			next(new Error('Error in getClicksignInvite.'));
+		}
+          url = 'https://michael:oobeeTh7@desk.clicksign.com/admin/users?page='+pg.toString();
       console.log('url: ', url);
       request({url: url}, function (error, response, body) {
         if (!error && response.statusCode == 200) {
           //console.log('body: ', body);
           //console.log('statuscode: ', statusCode)
-          next(null, bounced_email, body);
-        } else {
+          next(null,body);
+        } 
+        else {
+        	console.log('pg: ',pg);
+        	console.log('err');
           next(new Error('Error in getClicksignInvite.'));
         }
       });
     },
 
-    function getArchiveFromInvite(bounced_email, invitesBody, next){
-      if (invitesBody){
-        console.log('invitesBody: ', invitesBody);
-        var body = cheerio.load(invitesBody);
-        console.log('body: ', body);
-        var archive = body('a[href*="/admin/archives"]').first().text();
-        console.log('archive: ', archive);
-      }
-      if (archive){
-        next(null, bounced_email, archive)
-      } else {
-        next(new Error('Error in getArchiveFromInvite.'));
-      }
-    },
-
+    function getArchiveFromInvite( invitesBody, next){
+    	console.log('aqui');
+    	if(dataQ.Count==0){
+	      if (invitesBody){
+	    	  
+	        var $ = cheerio.load(invitesBody);
+	        var archive = $('tbody').find('tr').each(function(){
+	        	var $tds= $(this).find('td');
+	        	var uidStr=$tds.eq(0).find('a').attr('href');
+	        	uidStr=uidStr.substring(13);
+	        	var uid=parseInt(uidStr);
+	        	var params={
+	        			TableName: "Users",
+	        			Item: {
+	        				"User_ID":uid,
+	        				"Date": Date.parse($tds.eq(3).text()),
+	        				"Nome": $tds.eq(0).text(),
+	        				"CPF": $tds.eq(1).text(),
+	        				"E-Mail": $tds.eq(2).text(),
+	        				"Nascimento": $tds.eq(4).text(),
+	        				"Link":$tds.eq(5).html(),
+	        				"status": 1
+	        			}
+	        	};
+	        	cleanEmptyJson(params);
+	        	dynamo.put(params, function(err,data){
+	        		if(err){
+	        			console.error(err);
+	        			 next(new Error('Error in getArchiveFromInvite.'));
+	        		} 
+	        	});
+	        });
+	        pg=pg+1;
+	        process_stream(pg,dataQ);
+	      }
+    	}
+    	else {
+    		var dataQID=parseInt(dataQ.Items[0].User_ID);
+    		
+  	      console.log(dataQID);
+  	      if (invitesBody){
+	    	  
+	        var $ = cheerio.load(invitesBody);
+	        var i=1;
+	        var archive = $('tbody').find('tr').each(function(){
+	        	var $tds= $(this).find('td');
+	        	var uidStr=$tds.eq(0).find('a').attr('href');
+	        	uidStr=uidStr.substring(13);
+	        	var uid=parseInt(uidStr);
+	        	if(uid>dataQID){
+		        	var params={
+		        			TableName: "Users",
+		        			Item: {
+		        				"User_ID":uid,
+		        				"Date": Date.parse($tds.eq(3).text()),
+		        				"Nome": $tds.eq(0).text(),
+		        				"CPF": $tds.eq(1).text(),
+		        				"E-Mail": $tds.eq(2).text(),
+		        				"Nascimento": $tds.eq(4).text(),
+		        				"Link":$tds.eq(5).html(),
+		        				"status": 1
+		        			}
+		        	};
+		        	cleanEmptyJson(params);
+		        	dynamo.put(params, function(err,data){
+		        		if(err){
+		        			console.error(err);
+		        			 next(new Error('Error in getArchiveFromInvite.'));
+		        		} 
+		        	});
+		        	i++;
+	        	}
+		        });
+	        if(i==30){
+		        pg=pg+1;
+		        process_stream(pg,dataQ);
+	        }
+	      }
+      	}
+      },
+        
+        
+        //console.log('archive: ', archive);
+      
+      
+    ]);
+/*
     function getClicksignArchive(bounced_email, archive, next){
       var username = config['clicksign_auth_user'],
           password = config['clicksign_auth_pass'],
@@ -277,7 +229,7 @@ var process_stream = function(event, context){
       console.log('sender: ', sender);
 
       if (sender){
-        next(null, bounced_email, sender)
+        next(null, bounced_email, sender);
       } else {
         next(new Error('Error in getSenderFromArchive.'));
       }
@@ -362,7 +314,7 @@ var process_stream = function(event, context){
           next(err);
         } else {
           console.log('Email sent: ', data);
-          next(null, bounced_email, sender)
+          next(null, bounced_email, sender);
         }
        });
      },
@@ -397,8 +349,9 @@ var process_stream = function(event, context){
        } else {
          context.succeed('Successfully processed process_stream');
        }
-  });
+  });*/
 };
+
 
 function cleanEmptyJson(x) {
   var type = typeof x;
@@ -417,9 +370,23 @@ function cleanEmptyJson(x) {
   }
 }
 
-exports.handler = function(event, context) {
-  console.log('Received event:', JSON.stringify(event, null, 2));
+function getPosition(str,m,i){
+	return str.split(m,i).SourceNode.prototype.join(m).length;
+}
 
+exports.handler = function(event, context) {
+	
+	//var arrayUsers= $('tr').each(function(){console.log($(this).find('td:eq(0)').text());console.log($(this).find('td:eq(1)').text());console.log($(this).find('td:eq(5)').html());});
+	//console.log(arrayUsers);
+	async.waterfall([
+	getFirstItem
+	],
+	function( err, result){
+		process_stream(1,result);
+	}
+	);
+  console.log('Received event:', JSON.stringify(event, null, 2));
+/*
   var operation = '';
 
   if (event.Records){
@@ -447,4 +414,5 @@ exports.handler = function(event, context) {
     default:
       //context.fail(new Error('Unrecognized operation "' + operation + '"'));
   }
+  */
 };
