@@ -1,10 +1,8 @@
 var AWS = require('aws-sdk');
-var uuid = require('node-uuid');
 var request = require('request');
 var cheerio = require('cheerio');
 var fs = require('fs');
 var async = require('async');
-var uuid=require('node-uuid');
 
 AWS.config.region = 'us-east-1';
 var dynamo = new AWS.DynamoDB.DocumentClient();
@@ -62,8 +60,6 @@ function slackMessageJSON(payload, i){
 }
 
 function getFirstItem(next ){
-    var yesterday = new Date();
-    yesterday = yesterday.getFullYear()*10000+yesterday.getMonth()*100+yesterday.getDate()-1;
     var params = {
             TableName: "Users",
             IndexName: "status-Date-index",
@@ -179,6 +175,30 @@ function process_stream( pg,dataQ){
 		        				"status": 1
 		        			}
 		        	};
+		        	
+		        	var prosIndianos = {
+		        	        "cpf": params.Item.CPF,
+		        	        "birthday": params.Item.Nascimento,
+		        	        "name": params.Item.Nome,
+		        	        "hook_url": 'https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id='+params.Item.User_ID.toString()
+		        	      };
+		        	
+		        	      var options = {
+		        	        uri: 'https://consulta-cpf-staging.herokuapp.com/users',
+		        	        method: 'POST',
+		        	        json: prosIndianos
+		        	      };
+
+		        	      request(options, function (error, response, body) {
+		        	        if (!error && response.statusCode == 200) {
+		        	        	console.log('https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id='+params.Item.User_ID.toString());
+		        	          
+		        	        } else {
+		        	          next(error);
+		        	        }
+		        	      });
+		        	    
+		        	
 		        	cleanEmptyJson(params);
 		        	dynamo.put(params, function(err,data){
 		        		if(err){
@@ -370,23 +390,78 @@ function cleanEmptyJson(x) {
   }
 }
 
-function getPosition(str,m,i){
-	return str.split(m,i).SourceNode.prototype.join(m).length;
+function pegarPorID(event,next){
+	console.log("---validando---");
+	var id= parseInt(event.user_id);
+	 var params = {
+	            TableName: "Users",
+	            KeyConditionExpression: "#User_ID = :val",
+	            ExpressionAttributeValues:{
+	            	":val": id
+	            },
+	            Limit:1,
+	            ExpressionAttributeNames: {
+	                "#User_ID": "User_ID"
+	              }
+	 };
+	dynamo.query(params, function(err, data) {
+        if (err) {
+        	console.log(err);
+        	next(err);
+        }
+        else{
+        	console.log('N itens: ',data.Count);
+        	if(data.Count==1){
+        		next(null,event,data);
+        	}
+        	else{
+        		console.log("algo muito errado aconteceu e retornou mais de um item");
+        		next(new Error('ERRO'));
+        	}
+        }
+  });
 }
+
+function validarCPF(event,data, next){
+	if(event.body.error==""){
+		console.log("CPF válido");
+		next(null, 1);
+	}
+	else if(event.body.error=="error: data de nascimento divergente"){
+		
+	}
+	else if(event.body.error=="error: cpf incorreto")
+	else{
+		console.log('CPF errado');
+	}
+}
+
+
 
 exports.handler = function(event, context) {
 	
 	//var arrayUsers= $('tr').each(function(){console.log($(this).find('td:eq(0)').text());console.log($(this).find('td:eq(1)').text());console.log($(this).find('td:eq(5)').html());});
 	//console.log(arrayUsers);
-	async.waterfall([
-	getFirstItem
-	],
-	function( err, result){
-		process_stream(1,result);
+	if(event.user_id==null){
+		async.waterfall([
+		                 getFirstItem
+		                ],
+		    function( err, result){
+				process_stream(1,result);
+			}
+		);
+		console.log('Received event:', JSON.stringify(event, null, 2));
+		
 	}
-	);
-  console.log('Received event:', JSON.stringify(event, null, 2));
-/*
+	
+	if(event.user_id!=null){
+		async.waterfall([
+		     async.apply(pegarPorID, event),
+		     verificarCPF
+		]);
+	}
+	
+  /*
   var operation = '';
 
   if (event.Records){
