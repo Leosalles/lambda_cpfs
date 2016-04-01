@@ -10,54 +10,7 @@ var ses = new AWS.SES({apiVersion: '2010-12-01'});
 
 
 	
-function slackMessageJSON(payload, i){
-  console.log(payload);
-  var slackMessage = {
-    "channel": "#suporte-int",
-    "username": "Postmark",
-    "icon_emoji": ":mandrill:",
-    "text": "*Bounce received* " + payload[i]['Email'],
-    "attachments": [
-      {
-        "fallback": "Bounce received " + payload[i]['Email'],
-        "color": "#E3E4E6",
-        "fields": []
-      }
-    ]
-  };
 
-  if (payload[i]['Name']) {
-    slackMessage.attachments[0].fields.push(
-      {
-        "title": "Event",
-        "value": payload[i]['Name'],
-        "short": true
-      }
-    );
-  }
-
-  if (payload[i]['Description']){
-    slackMessage.attachments[0].fields.push(
-      {
-        "title": "Description",
-        "value": payload[i]['Description'],
-        "short": true
-      }
-    );
-  }
-
-  if (payload[i]['Details']){
-    slackMessage.attachments[0].fields.push(
-      {
-        "title": "Message",
-        "value": payload[i]['Details'],
-        "short": false
-      }
-    );
-  }
-
-  return slackMessage;
-}
 
 function getFirstItem(next ){
     var params = {
@@ -96,7 +49,9 @@ function process_stream( pg,dataQ){
 			console.log("Sem PG");
 			next(new Error('Error in getClicksignInvite.'));
 		}
-          url = 'https://michael:oobeeTh7@desk.clicksign.com/admin/users?page='+pg.toString();
+		var username = config['clicksign_auth_user'],
+      	password = config['clicksign_auth_pass'],
+      	url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users?page='+pg.toString();
       console.log('url: ', url);
       request({url: url}, function (error, response, body) {
         if (!error && response.statusCode == 200) {
@@ -175,7 +130,6 @@ function process_stream( pg,dataQ){
 		        				"status": 1
 		        			}
 		        	};
-		        	
 		        	var prosIndianos = {
 		        	        "cpf": params.Item.CPF,
 		        	        "birthday": params.Item.Nascimento,
@@ -197,7 +151,7 @@ function process_stream( pg,dataQ){
 		        	          next(error);
 		        	        }
 		        	      });
-		        	    
+		        	
 		        	
 		        	cleanEmptyJson(params);
 		        	dynamo.put(params, function(err,data){
@@ -209,7 +163,8 @@ function process_stream( pg,dataQ){
 		        	i++;
 	        	}
 		        });
-	        if(i==30){
+	        console.log(i);
+	        if(i>=30){
 		        pg=pg+1;
 		        process_stream(pg,dataQ);
 	        }
@@ -425,18 +380,65 @@ function pegarPorID(event,next){
 function validarCPF(event,data, next){
 	if(event.body.error==""){
 		console.log("CPF válido");
-		next(null, 1);
+		if(event.body.name_clean==event.body.name_gov){
+			//apertar o botão de verificar/
+			console.log("apertado?");
+			var username = config['clicksign_auth_user'],
+	          	password = config['clicksign_auth_pass'],
+	          	url = 'https://' + username + ':' + password + "@desk.clicksign.com/admin/users/"+event.user_id+"/verify"
+			request.post(url,{form:{_method:"patch"}});
+			next(null,event,data,"verificado");
+		}
+		else{
+			//Nome não bate, avisar!//
+			next(null,event,data,"Nome não bate!");
+		}
 	}
 	else if(event.body.error=="error: data de nascimento divergente"){
-		
+		//avisar
+		next(null,event,data,"data de nascimento divergente");
 	}
-	else if(event.body.error=="error: cpf incorreto")
+	else if(event.body.error=="error: cpf incorreto"){
+		//avisar
+		next(null,event,data,"cpf incorreto");
+	}
 	else{
 		console.log('CPF errado');
+		next(null,event,data,"Outro erro");
 	}
 }
 
 
+function sendSlackMessage(event, data,typeOfError, next) {
+	var username = config['clicksign_auth_user'],
+  	password = config['clicksign_auth_pass'],
+  	url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/'
+	var linkToUser=url+event.user_id;
+    var slackMessage = {
+      "channel": "#suporte-verifier",
+      "username": "Clicksign",
+      "icon_emoji": ":cs:",
+      "text": "ERRO: "+typeOfError+"\n"+ "User " + event.body.name_clean + " \n"+"Name: "+ event.body.name_gov +" \n" +
+      	"Data de nascimento (receita): " + event.body.birthday+"\n"+
+      	"e-mail: "+ data.Items[0]["E-Mail"]+"\n"+
+      	"Tomar uma ação: "+ linkToUser+"\n"
+    
+    };
+
+    var options = {
+      uri: 'https://hooks.slack.com/services/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',
+      method: 'POST',
+      json: slackMessage
+    };
+
+    request(options, function (error, response, body) {
+      if (!error && response.statusCode == 200) {
+        console.log('mensagem enviada ');
+      } else {
+        next(error);
+      }
+    });
+  }
 
 exports.handler = function(event, context) {
 	
@@ -457,7 +459,8 @@ exports.handler = function(event, context) {
 	if(event.user_id!=null){
 		async.waterfall([
 		     async.apply(pegarPorID, event),
-		     verificarCPF
+		     validarCPF,
+		     sendSlackMessage
 		]);
 	}
 	
