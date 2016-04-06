@@ -1,6 +1,7 @@
 var AWS = require('aws-sdk');
 var request = require('request');
 var cheerio = require('cheerio');
+var config = require('./config.json');
 var fs = require('fs');
 var async = require('async');
 
@@ -78,6 +79,8 @@ function process_stream( pg,dataQ){
 	        	var uidStr=$tds.eq(0).find('a').attr('href');
 	        	uidStr=uidStr.substring(13);
 	        	var uid=parseInt(uidStr);
+	        	var link= $tds.eq(5).html();
+	        	var status=1;
 	        	var params={
 	        			TableName: "Users",
 	        			Item: {
@@ -88,7 +91,7 @@ function process_stream( pg,dataQ){
 	        				"E-Mail": $tds.eq(2).text(),
 	        				"Nascimento": $tds.eq(4).text(),
 	        				"Link":$tds.eq(5).html(),
-	        				"status": 1
+	        				"status": status
 	        			}
 	        	};
 	        	cleanEmptyJson(params);
@@ -116,6 +119,8 @@ function process_stream( pg,dataQ){
 	        	var uidStr=$tds.eq(0).find('a').attr('href');
 	        	uidStr=uidStr.substring(13);
 	        	var uid=parseInt(uidStr);
+	        	var link= $tds.eq(5).html();
+	        	
 	        	if(uid>dataQID){
 		        	var params={
 		        			TableName: "Users",
@@ -133,7 +138,7 @@ function process_stream( pg,dataQ){
 		        	var prosIndianos = {
 		        	        "cpf": params.Item.CPF,
 		        	        "birthday": params.Item.Nascimento,
-		        	        "name": params.Item.Nome,
+		        	        "name": params.Item.Nome.trim(),
 		        	        "hook_url": 'https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id='+params.Item.User_ID.toString()
 		        	      };
 		        	
@@ -382,11 +387,25 @@ function validarCPF(event,data, next){
 		console.log("CPF válido");
 		if(event.body.name_clean==event.body.name_gov){
 			//apertar o botão de verificar/
-			console.log("apertado?");
+			console.log(event.user_id);
 			var username = config['clicksign_auth_user'],
 	          	password = config['clicksign_auth_pass'],
 	          	url = 'https://' + username + ':' + password + "@desk.clicksign.com/admin/users/"+event.user_id+"/verify"
 			request.post(url,{form:{_method:"patch"}});
+			dynamo.update({
+				TableName:'Users',
+				Key:{User_ID:parseInt(event.user_id)},
+				UpdateExpression:'set #status=:val',
+				ExpressionAttributeNames:{'#status': 'status_clicksign'},
+				ExpressionAttributeValues:{
+					':val': 'validado'
+				}
+			},function(err, data) {
+		        if (err) {
+		        	console.log(err);
+		        	next(err);
+		        }
+		    });
 			next(null,event,data,"verificado");
 		}
 		else{
@@ -404,41 +423,101 @@ function validarCPF(event,data, next){
 	}
 	else{
 		console.log('CPF errado');
-		next(null,event,data,"Outro erro");
+		next(null,event,data,"Error: CPF inexistente");
 	}
 }
 
 
 function sendSlackMessage(event, data,typeOfError, next) {
 	var username = config['clicksign_auth_user'],
-  	password = config['clicksign_auth_pass'],
-  	url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/'
+	  	password = config['clicksign_auth_pass'],
+	  	url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/',
+	  	color="ff0000";
+  	if(typeOfError=="verificado"){
+  		color="00ff00";
+  	}
+  	
 	var linkToUser=url+event.user_id;
-    var slackMessage = {
-      "channel": "#suporte-verifier",
-      "username": "Clicksign",
-      "icon_emoji": ":cs:",
-      "text": "ERRO: "+typeOfError+"\n"+ "User " + event.body.name_clean + " \n"+"Name: "+ event.body.name_gov +" \n" +
-      	"Data de nascimento (receita): " + event.body.birthday+"\n"+
-      	"e-mail: "+ data.Items[0]["E-Mail"]+"\n"+
-      	"Tomar uma ação: "+ linkToUser+"\n"
-    
-    };
-
+	var attachJson="[{\"color\":\""+color+"\",\"text\":\"User: " + event.body.name_clean + " \n"+
+		"Name: "+ event.body.name_gov +"\n" +
+		"CPF:"+ event.body.cpf+"\n"+
+		"Data de nascimento (receita): " + event.body.birthday+"\n"+
+		"e-mail: "+ data.Items[0]["E-Mail"]+"\""+
+		
+		", \n" + "\"title\":\"Tome uma ação \"," +
+		"\"title_link\":\"" +linkToUser+"\"," +
+		"\"fields\":" +
+		"[{\n"+
+		"\"title\":\"Verificar\",\n"+
+		"\"value\":\"<"+"https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id="+event.user_id+"|aqui>\",\n"+
+		"\"short\":true"+"}]"
+			+"}]";
+    var slackMessage = "token=xoxp-3121000102-10442276772-31921900067-c89c0c317b" +
+    		"&channel=%23suporte-verifier" +
+    		"&username=Clicksign" +
+    		"&as_user=true"+
+    		"&icon_emoji=%3Acs%3A&text=ERRO%3A"+
+    		typeOfError+
+    		"&attachments="+attachJson;
+    		
+    //slackMessage=encodeURIComponent(JSON.stringify(slackMessage));
+    console.log(slackMessage);
     var options = {
-      uri: 'https://hooks.slack.com/services/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',
-      method: 'POST',
-      json: slackMessage
+      uri: 'https://slack.com/api/chat.postMessage?'+slackMessage,
+      method: 'POST'
     };
 
     request(options, function (error, response, body) {
       if (!error && response.statusCode == 200) {
-        console.log('mensagem enviada ');
+    	  console.log(JSON.strigify(response.body));
+    	  console.log(JSON.strigify(response.body).ts);
+        dynamo.update({
+			TableName:'Users',
+			Key:{User_ID:parseInt(event.user_id)},
+			UpdateExpression:'set #slk=:val',
+			ExpressionAttributeNames:{'#slk': 'slk_TS'},
+			ExpressionAttributeValues:{
+				':val': response.body.ts
+			}
+		},function(err, data) {
+	        if (err) {
+	        	console.log(err);
+	        	next(err);
+	        }
+	    });
       } else {
         next(error);
       }
     });
   }
+
+function updateSlackMessage(id,data,next){
+	var username = config['clicksign_auth_user'],
+  	password = config['clicksign_auth_pass'],
+  	url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/'
+	
+var slackMessage = "token=xoxp-3121000102-10442276772-31921900067-c89c0c317b" +
+		"&channel=C)X3PR7PA"+
+		"&ts="+
+		"&username=Clicksign" +
+		"&icon_emoji=%3Acs%3A&text=Verificado";
+		
+//slackMessage=encodeURIComponent(JSON.stringify(slackMessage));
+console.log(slackMessage);
+var options = {
+  uri: 'https://slack.com/api/chat.update?'+slackMessage,
+  method: 'POST'
+};
+
+request(options, function (error, response, body) {
+  if (!error && response.statusCode == 200) {
+    console.log(response.body);
+  } else {
+    next(error);
+  }
+});
+	
+}
 
 exports.handler = function(event, context) {
 	
@@ -457,12 +536,22 @@ exports.handler = function(event, context) {
 	}
 	
 	if(event.user_id!=null){
-		async.waterfall([
-		     async.apply(pegarPorID, event),
-		     validarCPF,
-		     sendSlackMessage
-		]);
-	}
+		if(event.type=="validar"){
+			async.waterfall([
+			     async.apply(pegarPorID, event),
+			     validarCPF,
+			     sendSlackMessage
+			]);
+		}
+		else if(event.type=="update"){
+			console.log("UPDATEEEEE!!!!");
+			async.waterfall([
+						     async.apply(pegarPorID, event),
+						     updateSlackMessage
+						]);
+		}
+	};
+	
 	
   /*
   var operation = '';
