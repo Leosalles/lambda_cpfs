@@ -41,7 +41,6 @@ function process_stream(pg, dataQ) {
   async.waterfall([
     function getClicksignInvite(next) {
       if (pg == null) {
-        console.log("Sem página");
         next(new Error('Error in getClicksignInvite.'));
       }
       var username = config['clicksign_auth_user'],
@@ -185,6 +184,7 @@ function process_stream(pg, dataQ) {
         }
       }
     },
+    //Michael: Aqui precisa ter o tratamento de erro ou sucesso da função context.
     //console.log('archive: ', archive);
   ]);
 };
