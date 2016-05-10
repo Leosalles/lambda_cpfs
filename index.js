@@ -160,6 +160,7 @@ function process_stream(pg, dataQ) {
                   request(options, function(error, response, body) {
                     if (!error && response.statusCode == 200) {
                       console.log('https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id=' + params.Item.User_ID.toString());
+                      //console.log(prosIndianos);
                     } else {
                       console.log(error);
                     }
@@ -225,13 +226,7 @@ function pegarPorID(event, next) {
       console.log(err);
       next(err);
     } else {
-      console.log('N itens: ', data.Count);
-      if (data.Count == 1) {
-        next(null, event, data);
-      } else {
-        console.log("algo muito errado aconteceu e retornou mais de um item");
-        next(new Error('ERRO'));
-      }
+      next(null, event, data);
     }
   });
 }
@@ -302,104 +297,7 @@ function validarCPF(event, data, next) {
       next(err);
     }
   });
-
 }
-
-/*
-function sendSlackMessage(event, data,typeOfError, next) {
-  var username = config['clicksign_auth_user'],
-      password = config['clicksign_auth_pass'],
-      url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/',
-      color="ff0000";
-    if(typeOfError=="verificado"){
-      color="00ff00";
-    }
-    else if(typeOfError=="Nome não bate!"){
-      color="ffff00";
-    }
-  var linkToUser=url+event.user_id;
-  var attachJson="[{\"color\":\""+color+"\",\"text\":\"User: " + event.body.name_clean + " \n"+
-    "Name: "+ event.body.name_gov +"\n" +
-    "CPF:"+ event.body.cpf+"\n"+
-    "Data de nascimento (receita): " + event.body.birthday+"\n"+
-    "e-mail: "+ data.Items[0]["E-Mail"]+"\""+
-    
-    ", \n" + "\"title\":\"Tome uma ação \"," +
-    "\"title_link\":\"" +linkToUser+"\"," +
-    "\"fields\":" +
-    "[{\n"+
-    "\"title\":\"Verificar\",\n"+
-    "\"value\":\"<"+"https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/cpf?id="+event.user_id+"|aqui>\",\n"+
-    "\"short\":true"+"}]"
-      +"}]";
-    var slackMessage = "token=xoxp-3121000102-10442276772-31921900067-c89c0c317b" +
-        "&channel=%23suporte-verifier" +
-        "&as_user=true"+
-        "&text=ERRO%3A"+typeOfError+
-        "&attachments="+attachJson;
-        
-    //slackMessage=encodeURIComponent(JSON.stringify(slackMessage));
-    console.log(slackMessage);
-    var options = {
-      uri: 'https://slack.com/api/chat.postMessage?'+slackMessage,
-      method: 'POST'
-    };
-
-    request(options, function (error, response, body) {
-      if (!error && response.statusCode == 200) {
-        console.log(JSON.parse(response.body));
-        ts=(JSON.parse(response.body).ts);
-        console.log(ts);
-        dynamo.update({
-      TableName:'Users',
-      Key:{User_ID:parseInt(event.user_id)},
-      UpdateExpression:'set #slk=:val',
-      ExpressionAttributeNames:{'#slk': 'slk_TS'},
-      ExpressionAttributeValues:{
-        ':val': ts
-      }
-    },function(err, data) {
-          if (err) {
-            console.log(err);
-            next(err);
-          }
-      });
-      } else {
-        next(error);
-      }
-    });
-  }
-*/
-/*
-function updateSlackMessage(event,data,next){
-  var username = config['clicksign_auth_user'],
-    password = config['clicksign_auth_pass'],
-    url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/';
-  
-var slackMessage = "token=xoxp-3121000102-10442276772-31921900067-c89c0c317b" +
-    "&channel=C0X3PR7PA"+
-    "&ts="+data.Items[0].slk_TS+
-    "&text=Verificado"+
-    "&attachments=%5B%5D";
-    
-//slackMessage=encodeURIComponent(JSON.stringify(slackMessage));
-console.log(slackMessage);
-console.log(data);
-var options = {
-  uri: 'https://slack.com/api/chat.update?'+slackMessage,
-  method: 'POST'
-};
-
-request(options, function (error, response, body) {
-  if (!error && response.statusCode == 200) {
-    console.log(response.body);
-  } else {
-    next(error);
-  }
-});
-  
-}
-*/
 
 function pegarLista(next) {
   var params = {
@@ -432,12 +330,14 @@ function pegarLista(next) {
 }
 
 function montarHtml(data, next) {
-  var stumpHtml = "";
   var username = config['clicksign_auth_user'],
     password = config['clicksign_auth_pass'],
     url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/users/';
   console.log(data.Count);
   if (data.Count > 0) {
+    var html = '<html><head><title>Users</title></head>' +
+      '<style>table, th, td ' +
+      '{border: 1px solid black;border-collapse: collapse;}th, td {padding: 5px;text-align: left;}</style><body>';
     data.Items.forEach(function(elem) {
       var gov = '';
       if (!elem['name_gov']) {
@@ -454,7 +354,7 @@ function montarHtml(data, next) {
         cpf = elem['cpf'].toString();
       }
 
-      htmlP1 = '<table style ="width:100%">' +
+      html += '<table style ="width:100%">' +
         '<tr>' + '<th rowspan="5">' +
         elem['User_ID'].toString() +
         '<td>' + elem['name_clean'].toString() + '</td>' +
@@ -467,25 +367,16 @@ function montarHtml(data, next) {
         '</tr>' +
         '<tr>' +
         '<td>' + elem['birthday'].toString() + '</td>' +
-        '<td>' + '<a href="' + url + elem['User_ID'].toString() + '" target="_blank"> Link para usuario</a>' + '</td>' +
+        '<td>' + '<a href="' + url + elem['User_ID'].toString() + '" target="_blank">Link para usuario</a>' + '</td>' +
         '</tr>' +
         '<tr>' +
         '<td>' + elem['erro_resposta'].toString() + '</td>' +
-        '<td>' + '<a href="' + "https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/validar?id=" + elem['User_ID'].toString() + '" target="_blank"> valido </a>' + '</td>' +
+        '<td>' + '<a href="' + "https://r5dmfsj0kb.execute-api.us-east-1.amazonaws.com/prod/validar?id=" + elem['User_ID'].toString() + '" target="_blank">valido</a>' + '</td>' +
         '</tr></table><br>';
-      stumpHtml = stumpHtml.concat(htmlP1);
     });
+    html += '</body></html>';
   }
-  next(null, data, stumpHtml);
-}
-
-function imprimirHtml(data, hmtlPt, next) {
-  var html = '<html><head><title> Users</title></head>' +
-    '<style>table, th, td ' +
-    '{border: 1px solid black;border-collapse: collapse;}th, td {padding: 5px;text-align: left;}</style><body>' +
-    hmtlPt +
-    '</body></html>';
-  next(null, data, hmtlPt, html);
+  next(null, html);
 }
 
 exports.handler = function(event, context) {
@@ -527,9 +418,8 @@ exports.handler = function(event, context) {
   } else if (event.type == "web") {
     async.waterfall([
       pegarLista,
-      montarHtml,
-      imprimirHtml
-    ], function(err, data, htmlP1, html) {
+      montarHtml
+    ], function(err, html) {
       context.succeed(html)
     });
   } else {
