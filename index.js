@@ -11,6 +11,7 @@ var ses = new AWS.SES({
   apiVersion: '2010-12-01'
 });
 
+//Pega o primeiro item da DynamoDB
 function getFirstItem(next) {
   var params = {
     TableName: "Users",
@@ -36,12 +37,12 @@ function getFirstItem(next) {
     }
   });
 }
-
+//inicia o processo de pegar usuários
 function process_stream(pg, dataQ) {
   async.waterfall([
-    function getClicksignInvite(next) {
+    function getClicksignUser(next) {
       if (pg == null) {
-        next(new Error('Error in getClicksignInvite.'));
+        next(new Error('Error in getClicksignUser.'));
       }
       var username = config['clicksign_auth_user'],
         password = config['clicksign_auth_pass'],
@@ -57,58 +58,15 @@ function process_stream(pg, dataQ) {
         } else {
           console.log('pg: ', pg);
           console.log('err');
-          next(new Error('Error in getClicksignInvite.'));
+          next(new Error('Error in getClicksignUser.'));
         }
       });
     },
 
-    function getArchiveFromInvite(invitesBody, next) {
-      if (dataQ.Count == 0) {
-        if (invitesBody) {
-          var $ = cheerio.load(invitesBody);
-          var archive = $('tbody').find('tr').each(function() {
-            var $tds = $(this).find('td');
-            var uidStr = $tds.eq(0).find('a').attr('href');
-            uidStr = uidStr.substring(13);
-            var uid = parseInt(uidStr);
-            if (uid > 48537) {
-              console.log(uid);
-              var link = $tds.eq(5).html();
-              var status = 1;
-              if ($tds.eq(5).text().trim() == 'Verificar') {
-                status_click = 'Verificar';
-                console.log($tds.eq(5).text().trim())
-              }
-              if ($tds.eq(5).text().trim() == 'Verificado') {
-                status_click = 'validado';
-              }
-              var params = {
-                TableName: "Users",
-                Item: {
-                  "User_ID": uid,
-                  "Date": Date.parse($tds.eq(3).text()),
-                  "Nome": $tds.eq(0).text(),
-                  "CPF": $tds.eq(1).text(),
-                  "E-Mail": $tds.eq(2).text(),
-                  "Nascimento": $tds.eq(4).text(),
-                  "Link": $tds.eq(5).html(),
-                  "status": status,
-                  "status_clicksign": status_click
-                }
-              };
-              cleanEmptyJson(params);
-              dynamo.put(params, function(err, data) {
-                if (err) {
-                  console.error(err);
-                  next(new Error('Error in getArchiveFromInvite.'));
-                }
-              });
-            }
-          });
-          pg = pg + 1;
-          process_stream(pg, dataQ);
-        }
-      } else {
+//roda todas as páginas gravando os usuários na DB e procurando o primeiro registrado anteriormente
+
+    function getAllPages(invitesBody, next) {
+      
         var dataQID = parseInt(dataQ.Items[0].User_ID);
         console.log(dataQID);
         if (invitesBody) {
@@ -169,7 +127,7 @@ function process_stream(pg, dataQ) {
                 dynamo.put(params, function(err, data) {
                   if (err) {
                     console.error(err);
-                    next(new Error('Error in getArchiveFromInvite.'));
+                    next(new Error('Error in getAllPages.'));
                   }
                 });
               }
@@ -182,7 +140,7 @@ function process_stream(pg, dataQ) {
             process_stream(pg, dataQ);
           }
         }
-      }
+      
     },
     //Michael: Aqui precisa ter o tratamento de erro ou sucesso da função context.
     //console.log('archive: ', archive);
@@ -207,6 +165,8 @@ function cleanEmptyJson(x) {
   }
 }
 
+//Procura o usuário passado no evento
+
 function pegarPorID(event, next) {
   console.log("--validando--");
   var id = parseInt(event.user_id);
@@ -230,6 +190,89 @@ function pegarPorID(event, next) {
     }
   });
 }
+
+// ver de quem são os invites
+
+function getSenderFromInvites(){
+  async.waterfall([
+    function getBouncedEmail(next){
+      console.log(event.Records[0].eventID);
+      console.log(event.Records[0].eventName);
+      console.log('DynamoDB Record: %j', event.Records[0].dynamodb);
+      bounced_email = event.Records[0].dynamodb.NewImage.email.S;
+      if (bounced_email){
+        console.log('bounced_email: ', bounced_email);
+        next(null, bounced_email);
+      } else {
+        next(new Error('No bounced_mail found.'));
+      }
+    },
+
+    function getClicksignInvite(bounced_email, next){
+      var username = config['clicksign_auth_user'],
+          password = config['clicksign_auth_pass'],
+          url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/invites?email=' + bounced_email.replace('@', '%40');
+      console.log('url: ', url);
+      request({url: url}, function (error, response, body) {
+        if (!error && response.statusCode == 200) {
+          //console.log('body: ', body);
+          //console.log('statuscode: ', statusCode)
+          next(null, bounced_email, body);
+        } else {
+          next(new Error('Error in getClicksignInvite.'));
+        }
+      });
+    },
+
+    function getArchiveFromInvite(bounced_email, invitesBody, next){
+      if (invitesBody){
+        console.log('invitesBody: ', invitesBody);
+        var body = cheerio.load(invitesBody);
+        console.log('body: ', body);
+        var archive = body('a[href*="/admin/archives"]').first().text();
+        console.log('archive: ', archive);
+      }
+      if (archive){
+        next(null, bounced_email, archive)
+      } else {
+        next(new Error('Error in getArchiveFromInvite.'));
+      }
+    },
+
+    function getClicksignArchive(bounced_email, archive, next){
+      var username = config['clicksign_auth_user'],
+          password = config['clicksign_auth_pass'],
+          url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/archives/' + archive;
+      console.log('url: ', url);
+      request({url: url}, function (error, response, body) {
+        if (!error && response.statusCode == 200) {
+          //console.log('body: ', body);
+          next(null, bounced_email, body);
+        } else {
+          next(error);
+        }
+      });
+
+    },
+
+    function getSenderFromArchive(bounced_email, archivesBody, next){
+      var body = cheerio.load(archivesBody);
+      var archive = body('a[href*="/admin/archives"]').first().text();
+      var sender = {
+        "name": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0],
+        "email": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1]
+      };
+      console.log('sender: ', sender);
+
+      if (sender){
+        next(null, bounced_email, sender)
+      } else {
+        next(new Error('Error in getSenderFromArchive.'));
+      }
+    }])
+}
+
+//processo de validação em si
 
 function validarCPF(event, data, next) {
   /*
@@ -271,6 +314,12 @@ function validarCPF(event, data, next) {
     typeoferror = event.body.error;
   }
 
+  if (typeoferror !="verificado"){
+
+
+  }
+
+
   dynamo.update({
     TableName: 'Users',
     Key: {
@@ -298,6 +347,10 @@ function validarCPF(event, data, next) {
     }
   });
 }
+
+
+
+//lista da DB para visualização 
 
 function pegarLista(next) {
   var params = {
@@ -328,6 +381,8 @@ function pegarLista(next) {
     }
   });
 }
+
+//html
 
 function montarHtml(data, next) {
   var username = config['clicksign_auth_user'],
@@ -379,9 +434,50 @@ function montarHtml(data, next) {
   next(null, html);
 }
 
+// controller de envio de emails.
+
+function emailSender(){
+  //TODO: separar por empresa
+  async.waterfall([
+      pegarLista,
+      montarHtml
+    ], function(err, html) {
+      var params={
+        Source: config['ses_from'],
+        Destination:{
+          ToAddresses: [sender['email']],
+          BccAddresses:[config['ses_from']]
+        },
+        Message:{
+          Subject: {
+            Data: 'Problema na validação de usuários'
+          },
+          Body: {
+            Html: {
+              Data: template
+            }
+          }
+        }
+      };
+
+      ses.sendEmail(params, function(err, data){
+        if(err){
+          next(err);
+        } else{
+          console.log('Email sent: ', data);
+        }
+
+      });
+    });
+}
+
+//MAIN
+
 exports.handler = function(event, context) {
   //var arrayUsers= $('tr').each(function(){console.log($(this).find('td:eq(0)').text());console.log($(this).find('td:eq(1)').text());console.log($(this).find('td:eq(5)').html());});
   //console.log(arrayUsers);
+
+  // tente validar usuário na clicksign
   if (event.type == "valide") {
     if (event.id == null) {
       context.succeed("sem ID");
@@ -433,6 +529,8 @@ exports.handler = function(event, context) {
       );
       console.log('Received event:', JSON.stringify(event, null, 2));
     }
+
+    // tente validar usuários, usado com a resposta da mensagem do aplicativo da receita 
     if (event.user_id != null) {
       if (event.type == "validar") {
         async.waterfall([
