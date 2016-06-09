@@ -7,9 +7,9 @@
     "node-lambda": "*",
     "aws-sdk": "*",
     "cheerio": "*",
-	"node-uuid": "*",
-	"request": "*",
-	"async": "*",
-	"fs": "*"
+  	"node-uuid": "*",
+  	"request": "*",
+  	"async": "*",
+  	"fs": "*"
   }
 }

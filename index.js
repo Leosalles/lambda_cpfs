@@ -57,7 +57,7 @@ function process_stream(pg, dataQ) {
           next(null, body);
         } else {
           console.log('pg: ', pg);
-          console.log('err');
+          console.log(error);
           next(new Error('Error in getClicksignUser.'));
         }
       });
@@ -193,61 +193,53 @@ function pegarPorID(event, next) {
 
 // ver de quem são os invites
 
-function getSenderFromInvites(){
+function getSenderFromInvites(event, emailR){//creio que não pode ser 'email', por isso emailR
+  console.log(emailR);
   async.waterfall([
-    function getBouncedEmail(next){
-      console.log(event.Records[0].eventID);
-      console.log(event.Records[0].eventName);
-      console.log('DynamoDB Record: %j', event.Records[0].dynamodb);
-      bounced_email = event.Records[0].dynamodb.NewImage.email.S;
-      if (bounced_email){
-        console.log('bounced_email: ', bounced_email);
-        next(null, bounced_email);
-      } else {
-        next(new Error('No bounced_mail found.'));
-      }
-    },
-
-    function getClicksignInvite(bounced_email, next){
+    async.apply(function getClicksignInvite(email, event, next){
       var username = config['clicksign_auth_user'],
           password = config['clicksign_auth_pass'],
-          url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/invites?email=' + bounced_email.replace('@', '%40');
-      console.log('url: ', url);
+          url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/invites?email=' + email.replace('@', '%40');
+      console.log(event);
       request({url: url}, function (error, response, body) {
         if (!error && response.statusCode == 200) {
           //console.log('body: ', body);
           //console.log('statuscode: ', statusCode)
-          next(null, bounced_email, body);
+          next(null, email,event, body);
         } else {
+          console.log("error in invite")
           next(new Error('Error in getClicksignInvite.'));
         }
       });
-    },
+    },emailR, event),
 
-    function getArchiveFromInvite(bounced_email, invitesBody, next){
+    function getArchiveFromInvite(email, event, invitesBody, next){
+      console.log("enter archive");
       if (invitesBody){
-        console.log('invitesBody: ', invitesBody);
+        console.log('event2');
+        console.log(event);
         var body = cheerio.load(invitesBody);
-        console.log('body: ', body);
+      //  console.log('body: ', body);
         var archive = body('a[href*="/admin/archives"]').first().text();
-        console.log('archive: ', archive);
+      //  console.log('archive: ', archive);
       }
       if (archive){
-        next(null, bounced_email, archive)
+        next(null, email,event, archive)
       } else {
         next(new Error('Error in getArchiveFromInvite.'));
       }
     },
 
-    function getClicksignArchive(bounced_email, archive, next){
+    function getClicksignArchive(email,event, archive, next){
       var username = config['clicksign_auth_user'],
           password = config['clicksign_auth_pass'],
           url = 'https://' + username + ':' + password + '@desk.clicksign.com/admin/archives/' + archive;
       console.log('url: ', url);
+      console.log(event);
       request({url: url}, function (error, response, body) {
         if (!error && response.statusCode == 200) {
           //console.log('body: ', body);
-          next(null, bounced_email, body);
+          next(null, email,event, body);
         } else {
           next(error);
         }
@@ -255,21 +247,64 @@ function getSenderFromInvites(){
 
     },
 
-    function getSenderFromArchive(bounced_email, archivesBody, next){
+    function getSenderFromArchive(email,event, archivesBody, next){
       var body = cheerio.load(archivesBody);
       var archive = body('a[href*="/admin/archives"]').first().text();
+      console.log(' arch: ', archive)
       var sender = {
         "name": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[0],
         "email": body('caption').text().split('por ')[1].trim().slice(0,-1).split(' (')[1]
       };
+      //caso do próprio sender estar com problema
+      if (!sender){
+        console.log(" -- User==SENDER --")
+        sender={
+          "name":event.body.name_clean,
+          "email":email
+        }
+      }
       console.log('sender: ', sender);
-
       if (sender){
-        next(null, bounced_email, sender)
+        next(null, event,sender)
       } else {
         next(new Error('Error in getSenderFromArchive.'));
       }
-    }])
+    }
+  ],
+  function sendToDynamo(err,event,sender){
+    console.log("Email do Sender: ", sender.email);
+    dynamo.update({
+      TableName: 'Users',
+      Key: {
+        User_ID: parseInt(event.user_id)
+      },
+      UpdateExpression: 'set  #clean= :name_clean ,  #gov= :name_gov , #CPF= :cpf , #nascimento= :birthday , #error=:tError, #emailSender=:esender, #nameSender=:nsender',
+      ExpressionAttributeNames: {
+        '#clean': 'name_clean',
+        '#gov': 'name_gov',
+        '#CPF': 'cpf',
+        '#nascimento': 'birthday',
+        '#error': 'erro_resposta',
+        '#emailSender': 'email_Sender',
+        '#nameSender': 'name_Sender'
+      },
+      ExpressionAttributeValues: {
+        ':name_clean': event.body.name_clean,
+        ':name_gov': event.body.name_gov,
+        ':cpf': event.body.cpf,
+        ':birthday': event.body.birthday,
+        ':tError': event.typeoferror,
+        ':esender': sender.email,
+        ':nsender':sender.name
+      }
+    }, function(err, data) {
+      if (err) {
+        console.log(err);
+        next(err);
+      }
+    });
+  });
+  console.log('saida');
 }
 
 //processo de validação em si
@@ -304,7 +339,7 @@ function validarCPF(event, data, next) {
           _method: "patch"
         }
       });
-      typeoferror = "verificado";
+      typeoferror = "Verificado";
     } else {
       //Nome não bate, avisar!//
       typeoferror = "Nome não bate!";
@@ -314,41 +349,76 @@ function validarCPF(event, data, next) {
     typeoferror = event.body.error;
   }
 
-  if (typeoferror !="verificado"){
+  if (typeoferror !="Verificado"){
+    event.typeoferror=typeoferror;
+    getSenderFromInvites(event, data.Items[0]["E-Mail"]);
+    
 
-
+  } else{
+    dynamo.update({
+      TableName: 'Users',
+      Key: {
+        User_ID: parseInt(event.user_id)
+      },
+      UpdateExpression: 'set  #clean= :name_clean ,  #gov= :name_gov , #CPF= :cpf , #nascimento= :birthday , #error=:tError',
+      ExpressionAttributeNames: {
+        '#clean': 'name_clean',
+        '#gov': 'name_gov',
+        '#CPF': 'cpf',
+        '#nascimento': 'birthday',
+        '#error': 'erro_resposta'
+      },
+      ExpressionAttributeValues: {
+        ':name_clean': event.body.name_clean,
+        ':name_gov': event.body.name_gov,
+        ':cpf': event.body.cpf,
+        ':birthday': event.body.birthday,
+        ':tError': typeoferror
+      }
+    }, function(err, data) {
+      if (err) {
+        console.log(err);
+        next(err);
+      }
+    });
   }
-
-
-  dynamo.update({
-    TableName: 'Users',
-    Key: {
-      User_ID: parseInt(event.user_id)
-    },
-    UpdateExpression: 'set  #clean= :name_clean ,  #gov= :name_gov , #CPF= :cpf , #nascimento= :birthday , #error=:tError',
-    ExpressionAttributeNames: {
-      '#clean': 'name_clean',
-      '#gov': 'name_gov',
-      '#CPF': 'cpf',
-      '#nascimento': 'birthday',
-      '#error': 'erro_resposta'
-    },
-    ExpressionAttributeValues: {
-      ':name_clean': event.body.name_clean,
-      ':name_gov': event.body.name_gov,
-      ':cpf': event.body.cpf,
-      ':birthday': event.body.birthday,
-      ':tError': typeoferror
-    }
-  }, function(err, data) {
-    if (err) {
-      console.log(err);
-      next(err);
-    }
-  });
 }
 
+function onlyUnique(value,index, self){
+  return self.indexOf(value)===index;
+}
 
+function logSenderNames(element,index,array){
+  console.log("a["+index+"] = "+element.name_Sender);
+}
+
+var mapUsers=function(users){
+  //ainda tem algo errado..
+  console.log(' N do users: '+ users.length.toString());
+  var senders=users.map(function(user,index,users){return user["name_Sender"]});
+  var uniques=senders.filter(onlyUnique);
+  if(uniques==null){
+    console.log('      Erro: nao tem Senders       ');
+  } else{
+    console.log(" N unique: "+ uniques.length.toString());
+    uniques.forEach(function(i,ind,uniq){
+      //para cada unique dê o nome de i, e unique vira uniq, users é passado como this
+      console.log(i);
+      if(i==undefined){
+          console.log("undef");
+      } else{
+        var e = this.filter(function(user2,inn,arr){
+          return user2["name_Sender"]==this.toString()
+          
+        },i);
+        console.log(' N do sender: '+ e.length.toString());
+        //e.forEach(logSenderNames);
+      }
+    }, users);
+
+    
+  }
+}
 
 //lista da DB para visualização 
 
@@ -367,7 +437,7 @@ function pegarLista(next) {
     ExpressionAttributeValues: {
       ":val": 1,
       ":valid": "validado",
-      ":verified": "verificado"
+      ":verified": "Verificado"
     },
     ScanIndexForward: false
   };
@@ -377,9 +447,12 @@ function pegarLista(next) {
       console.log(err);
       next(err);
     } else {
+
+      var m =mapUsers(data.Items);
       next(null, data);
     }
   });
+
 }
 
 //html
@@ -409,6 +482,15 @@ function montarHtml(data, next) {
         cpf = elem['cpf'].toString();
       }
 
+      var senderName = '';
+      if (!elem['name_Sender']) {
+        senderName = "NAO APRESENTA";
+      }
+      if (elem['name_Sender']) {
+        senderName = elem['name_Sender'].toString();
+      }
+
+
       html += '<table style ="width:100%">' +
         '<tr>' + '<th rowspan="5">' +
         elem['User_ID'].toString() +
@@ -418,7 +500,7 @@ function montarHtml(data, next) {
         '<td>' + gov + '</td>' +
         '</tr>' +
         '<tr>' +
-        '<td>' + cpf + '</td>' +
+        '<td>' + senderName + '</td>' +
         '</tr>' +
         '<tr>' +
         '<td>' + elem['birthday'].toString() + '</td>' +
@@ -436,7 +518,7 @@ function montarHtml(data, next) {
 
 // controller de envio de emails.
 
-function emailSender(){
+function emailController(){
   //TODO: separar por empresa
   async.waterfall([
       pegarLista,
