@@ -4,6 +4,7 @@ var cheerio = require('cheerio');
 var config = require('./config.json');
 var fs = require('fs');
 var async = require('async');
+var jsdiff=require('diff');
 
 AWS.config.region = 'us-east-1';
 var dynamo = new AWS.DynamoDB.DocumentClient();
@@ -31,7 +32,6 @@ function getFirstItem(next) {
   dynamo.query(params, function(err, data) {
     if (err) {
       console.log(err);
-      //next(err);
     } else {
       next(null, data);
     }
@@ -63,11 +63,10 @@ function process_stream(pg, dataQ) {
       });
     },
 
-//roda todas as páginas gravando os usuários na DB e procurando o primeiro registrado anteriormente
+//roda todas as páginas gravando os usuários na DB parando quando encontra o registrado anteriormente
 
     function getAllPages(invitesBody, next) {
-      
-        var dataQID = parseInt(dataQ.Items[0].User_ID);
+        var dataQID=parseInt(dataQ.Items[0].User_ID);
         console.log(dataQID);
         if (invitesBody) {
           var $ = cheerio.load(invitesBody);
@@ -77,6 +76,8 @@ function process_stream(pg, dataQ) {
             var uidStr = $tds.eq(0).find('a').attr('href');
             uidStr = uidStr.substring(13);
             var uid = parseInt(uidStr);
+
+            //verifica se UID é maior que o do último gravado na DB
             if (uid > dataQID) {
               var link = $tds.eq(5).html();
               if ($tds.eq(5).text().trim() == 'Verificar') {
@@ -93,7 +94,7 @@ function process_stream(pg, dataQ) {
                   Item: {
                     "User_ID": uid,
                     "Date": Date.parse($tds.eq(3).text()),
-                    "Nome": $tds.eq(0).text(),
+                    "Nome": $tds.eq(0).text().trim(),
                     "CPF": $tds.eq(1).text(),
                     "E-Mail": $tds.eq(2).text(),
                     "Nascimento": $tds.eq(4).text(),
@@ -278,7 +279,7 @@ function getSenderFromInvites(event, emailR){//creio que não pode ser 'email', 
       Key: {
         User_ID: parseInt(event.user_id)
       },
-      UpdateExpression: 'set  #clean= :name_clean ,  #gov= :name_gov , #CPF= :cpf , #nascimento= :birthday , #error=:tError, #emailSender=:esender, #nameSender=:nsender',
+      UpdateExpression: 'set  #clean= :name_clean ,  #gov= :name_gov , #CPF= :cpf , #nascimento= :birthday , #error=:tError, #emailSender=:esender, #nameSender=:nsender, #sent=:sent',
       ExpressionAttributeNames: {
         '#clean': 'name_clean',
         '#gov': 'name_gov',
@@ -286,7 +287,8 @@ function getSenderFromInvites(event, emailR){//creio que não pode ser 'email', 
         '#nascimento': 'birthday',
         '#error': 'erro_resposta',
         '#emailSender': 'email_Sender',
-        '#nameSender': 'name_Sender'
+        '#nameSender': 'name_Sender',
+        '#sent':'sent'
       },
       ExpressionAttributeValues: {
         ':name_clean': event.body.name_clean,
@@ -295,7 +297,8 @@ function getSenderFromInvites(event, emailR){//creio que não pode ser 'email', 
         ':birthday': event.body.birthday,
         ':tError': event.typeoferror,
         ':esender': sender.email,
-        ':nsender':sender.name
+        ':nsender':sender.name,
+        ':sent': 0
       }
     }, function(err, data) {
       if (err) {
@@ -392,8 +395,120 @@ function logSenderNames(element,index,array){
   console.log("a["+index+"] = "+element.name_Sender);
 }
 
-var mapUsers=function(users){
-  //ainda tem algo errado..
+function diffEmNegrito(prim,segun){
+  var diff=jsdiff.diffWords(prim,segun);
+  var ret="";
+  diff.forEach(function(part){
+    texti=part.added? '<font color = "Orange">'+part.value+"</font>":part.removed? "" : part.value;
+    ret+=texti;
+  });
+  return ret
+}
+
+function diffEmNegrito2(prim,segun){
+  var diff=jsdiff.diffWords(prim,segun);
+  var ret="";
+  diff.forEach(function(part){
+    texti=part.added? "" :part.removed? '<font color= "IndianRed">'+part.value+"</font>": part.value;
+    ret+=texti;
+  });
+  return ret
+}
+
+function compararErro(a,b){
+  if(a['erro_resposta']<b['erro_resposta'])
+    return -1;
+  if (a['erro_resposta']>b['erro_resposta'])
+    return 1;
+  return 0
+}
+
+function compararEmail(a,b){
+  if(a['E-Mail']<b['E-Mail'])
+    return -1;
+  if (a['E-Mail']>b['E-Mail'])
+    return 1;
+  return 0
+}
+
+function bulkhtml(users){
+  var html = '<html><head><title>Users</title>'+'<style>table, th, td ' +
+      '{border: 1px ;'+
+      ' border-collapse: collapse;}</style>'+'</head>' +
+      '<body><p>'+ users[0]["name_Sender"].toString()  + '\nInformamos que não foi possível autenticar o(s) seguinte(s) signatário(s)\n \n</p>';
+      html += '<table style ="width:100%">'+
+      '<tr> '+
+          '<td>'+'E-mail'+
+          '<td>'+'Nome enviado'+
+          '<td>'+'Receita'+
+        '</tr>';
+        
+  users.sort(compararEmail);
+  users.sort(compararErro);
+  
+  users.forEach(function(elem) {
+    var segundoel="",
+        terel="";
+    switch (elem['erro_resposta']){
+      case "Nome não bate!": 
+        segundoel=diffEmNegrito(elem['name_gov'],elem['name_clean']);
+        terel=diffEmNegrito2(elem['name_gov'],elem['name_clean']);
+      break;
+
+      case "error: cpf inexistente":
+        segundoel=elem['name_clean'];
+        terel="CPF inexistente";
+      break;
+
+      case "error: data de nascimento divergente":
+        segundoel=elem['name_clean'];
+        terel="Data de nascimento divergente";
+      break;
+    }
+
+      html +=
+        '<tr> '+
+          '<td>'+elem['E-Mail']+
+          '<td>'+segundoel+
+          '<td>'+terel+
+        '</tr>'
+    });
+    html += '</table><p>\nCaso seja necessário realizar a correção dos dados, favor enviar e-mail para suporte@clicksign.com com nome, CPF e data de nascimento do(s) signatário(s) para conferência na Receita Federal.'+
+    '\n Atenciosamente</p>' +'</body>'+'</html>';
+    return html
+}
+
+function enviarEmails(bulk){
+  var template= bulkhtml(bulk)
+  var params={
+        Source: config['ses_from'],
+        Destination:{
+          ToAddresses: ['leonardo.salles@clicksign.com'],
+         // BccAddresses:[config['ses_from']]
+        },
+        Message:{
+          Subject: {
+            Data: 'Falha na autenticação de signatário(s)'
+          },
+          Body: {
+            Html: {
+              Data: template
+            }
+          }
+        }
+      };
+
+      ses.sendEmail(params, function(err, bulk){
+        if(err){
+          console.log(err);
+        } else{
+          console.log('Email sent');
+        }
+
+      });
+}
+
+function mapUsers(users,next){
   console.log(' N do users: '+ users.length.toString());
   var senders=users.map(function(user,index,users){return user["name_Sender"]});
   var uniques=senders.filter(onlyUnique);
@@ -401,23 +516,53 @@ var mapUsers=function(users){
     console.log('      Erro: nao tem Senders       ');
   } else{
     console.log(" N unique: "+ uniques.length.toString());
+    var k=[];
     uniques.forEach(function(i,ind,uniq){
-      //para cada unique dê o nome de i, e unique vira uniq, users é passado como this
+      //para cada unique, um bulk
+      //cada unique entra com o nome de i, e unique vira uniq, users é passado como this
       console.log(i);
       if(i==undefined){
           console.log("undef");
       } else{
-        var e = this.filter(function(user2,inn,arr){
+        //vamos agora pegar cada bulk de users:
+        var e = this[0].filter(function(user2,inn,arr){
           return user2["name_Sender"]==this.toString()
-          
         },i);
+        //feito isso vamos enviar os emails.
         console.log(' N do sender: '+ e.length.toString());
-        //e.forEach(logSenderNames);
+        this[1].push(e);
       }
-    }, users);
-
-    
+    }, [users,k]);
+    next(null, users,k)
   }
+}
+
+function todosEmails(users,k,next){
+  k.forEach(function(ki,index,k){enviarEmails(ki);});
+  next(null, users);
+}
+
+function updatedosEnviados( users){
+  users.forEach(function(user,i,u){
+    dynamo.update({
+        TableName: 'Users',
+        Key: {
+          User_ID: parseInt(user['id'])
+        },
+        UpdateExpression: 'set  #sent=:val',
+        ExpressionAttributeNames: {
+          '#sent': 'sent'
+        },
+        ExpressionAttributeValues: {
+          ':val': 1
+        }
+      }, function(err, data) {
+        if (err) {
+          console.log(err);
+          next(err);
+        }
+      })
+  })
 }
 
 //lista da DB para visualização 
@@ -427,12 +572,13 @@ function pegarLista(next) {
     TableName: "Users",
     IndexName: "status-Date-index",
     KeyConditionExpression: "#status = :val",
-    FilterExpression: "(#status_clicksign <> :valid AND #status_clicksign <> :verified AND #err <>:verified) AND attribute_exists(#name_clean)",
+    FilterExpression: "(#status_clicksign <> :valid AND #status_clicksign <> :verified AND #err <>:verified) AND attribute_exists(#name_clean) AND #sent<>:val",
     ExpressionAttributeNames: {
       "#status_clicksign": "status_clicksign",
       "#name_clean": "name_clean",
       "#status": "status",
-      "#err": "erro_resposta"
+      "#err": "erro_resposta",
+      "#sent":"sent"
     },
     ExpressionAttributeValues: {
       ":val": 1,
@@ -447,9 +593,7 @@ function pegarLista(next) {
       console.log(err);
       next(err);
     } else {
-
-      var m =mapUsers(data.Items);
-      next(null, data);
+      next(null, data.Items);
     }
   });
 
@@ -516,42 +660,6 @@ function montarHtml(data, next) {
   next(null, html);
 }
 
-// controller de envio de emails.
-
-function emailController(){
-  //TODO: separar por empresa
-  async.waterfall([
-      pegarLista,
-      montarHtml
-    ], function(err, html) {
-      var params={
-        Source: config['ses_from'],
-        Destination:{
-          ToAddresses: [sender['email']],
-          BccAddresses:[config['ses_from']]
-        },
-        Message:{
-          Subject: {
-            Data: 'Problema na validação de usuários'
-          },
-          Body: {
-            Html: {
-              Data: template
-            }
-          }
-        }
-      };
-
-      ses.sendEmail(params, function(err, data){
-        if(err){
-          next(err);
-        } else{
-          console.log('Email sent: ', data);
-        }
-
-      });
-    });
-}
 
 //MAIN
 
@@ -596,9 +704,14 @@ exports.handler = function(event, context) {
   } else if (event.type == "web") {
     async.waterfall([
       pegarLista,
-      montarHtml
-    ], function(err, html) {
-      context.succeed(html)
+      mapUsers,
+      todosEmails,
+      updatedosEnviados
+    ], function(err, data) {
+      if (err) {
+          console.log(err);
+          next(err);
+        }
     });
   } else {
     if (event.user_id == null) {

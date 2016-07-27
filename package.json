@@ -10,6 +10,7 @@
   	"node-uuid": "*",
   	"request": "*",
   	"async": "*",
-  	"fs": "*"
+  	"fs": "*",
+    "diff":"*"
   }
 }
